@@ -9,15 +9,11 @@ def image_to_base64(image_path):
         return base64.b64encode(img_file.read()).decode('utf-8')
 
 def process_images(images_folder, cmaps_folder, db_name, table_name, AUTH_TOKEN, DB_URL, max_images=None):
-
-    conn = libsql.connect(db_name, sync_url=DB_URL, auth_token=AUTH_TOKEN)
-
+    conn = libsql.connect(db_name, sync_url=DB_URL, auth_token=AUTH_TOKEN)    
     conn.sync()
-    
-    cursor = conn.cursor()
 
     
-    cursor.execute(f'''
+    conn.execute(f'''
     CREATE TABLE IF NOT EXISTS {table_name} (
         id INTEGER PRIMARY KEY,
         image_base64 TEXT,
@@ -25,12 +21,20 @@ def process_images(images_folder, cmaps_folder, db_name, table_name, AUTH_TOKEN,
         cmap_base64 TEXT
     )
     ''')
+    
+    cur=conn.cursor()
 
-    # Gather image file pairs
-    image_files = sorted([f for f in os.listdir(images_folder) if f.endswith('.jpg')])
-    mask_files = sorted([f for f in os.listdir(images_folder) if f.endswith('_mask.png')])
-    cmap_files = sorted([f for f in os.listdir(cmaps_folder) if f.endswith('.png') and f.startswith('cmapped_mask_')])
-
+    try:
+        image_files = sorted([f for f in os.listdir(images_folder) if f.endswith('.jpg')])
+        mask_files = sorted([f for f in os.listdir(images_folder) if f.endswith('_mask.png')])
+        cmap_files = sorted([f for f in os.listdir(cmaps_folder) if f.endswith('.png') and f.startswith('cmapped_mask_')])
+    except FileNotFoundError:
+        images_folder = os.path.join('create_ds', images_folder)
+        cmaps_folder = os.path.join('create_ds', cmaps_folder)
+        image_files = sorted([f for f in os.listdir(images_folder) if f.endswith('.jpg')])
+        mask_files = sorted([f for f in os.listdir(images_folder) if f.endswith('_mask.png')])
+        cmap_files = sorted([f for f in os.listdir(cmaps_folder) if f.endswith('.png') and f.startswith('cmapped_mask_')])
+        
     if not (len(image_files) == len(mask_files) == len(cmap_files)):
         print("Mismatch in the number of image, mask, and colormap files.")
         return
@@ -43,6 +47,8 @@ def process_images(images_folder, cmaps_folder, db_name, table_name, AUTH_TOKEN,
         total_images = min(total_images, max_images)
 
     print(f"Processing up to {total_images} images")
+
+    insert_sql = f"INSERT INTO {table_name} (image_base64, mask_base64, cmap_base64) VALUES (?, ?, ?)"
 
     for idx, (img_file, mask_file, cmap_file) in enumerate(zip(image_files, mask_files, cmap_files)):
         if idx >= total_images:
@@ -64,16 +70,12 @@ def process_images(images_folder, cmaps_folder, db_name, table_name, AUTH_TOKEN,
         img_base64 = image_to_base64(img_path)
         mask_base64 = image_to_base64(mask_path)
         cmap_base64 = image_to_base64(cmap_path)
-
-        cursor.execute(f'''
-        INSERT INTO {table_name} (image_base64, mask_base64, cmap_base64)
-        VALUES (?, ?, ?)
-        ''', (img_base64, mask_base64, cmap_base64))
+        
+        conn.sync()
+        cur.execute(insert_sql, (img_base64, mask_base64, cmap_base64))
 
         print(f"Processed image set {idx + 1}/{total_images}: {img_file}, {mask_file}, {cmap_file}")
-
     conn.commit()
-    conn.close()
     
     print("Processing complete.")
 
@@ -84,8 +86,8 @@ AUTH_TOKEN = os.getenv('AUTH_TOKEN')
 DB_URL = os.getenv('DB_URL')
 
 
-images_folder = "create_ds/dataset"
-cmaps_folder = "create_ds/whole_cmaps"
+images_folder = "dataset"
+cmaps_folder = "whole_cmaps"
 db_name = "app.db"
 table_name = "images_dataset"
 max_images = 15
