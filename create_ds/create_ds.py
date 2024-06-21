@@ -1,6 +1,7 @@
 import os
 import base64
 from PIL import Image
+from io import BytesIO
 import libsql_experimental as libsql
 from dotenv import load_dotenv
 
@@ -8,7 +9,44 @@ def image_to_base64(image_path):
     with open(image_path, "rb") as img_file:
         return base64.b64encode(img_file.read()).decode('utf-8')
 
-def process_images(images_folder, cmaps_folder, db_name, table_name, AUTH_TOKEN, DB_URL, max_images=None):
+def convert_16bit_to_8bit_jpeg(img_16bit):
+    if img_16bit.mode != 'I;16':
+        raise ValueError("The provided image is not a 16-bit grayscale image.")
+    img_8bit = img_16bit.point(lambda i: i * (1./256)).convert('L')
+    buffer = BytesIO()
+    img_8bit.save(buffer, format="JPEG")
+    return buffer
+
+def convert_to_jpeg(im):
+    with BytesIO() as f:
+        im.save(f, format='JPEG')
+        return f.getvalue()
+
+
+def process_compression(img_path, mask_path, cmap_path):
+    
+    img_buffered = BytesIO()
+    mask_buffered = BytesIO()
+    cmap_buffered = BytesIO()
+
+    
+    img = Image.open(img_path)
+    img = img.resize((2048,2048))
+    img.save(img_buffered, format="JPEG")
+    
+    img = Image.open(cmap_path)
+    img.save(cmap_buffered, format="JPEG")
+    
+    img = Image.open(mask_path)
+    mask_buffered = convert_16bit_to_8bit_jpeg(img)
+    # img.save(mask_buffered, format="JPEG")
+
+
+
+    return img_buffered, mask_buffered, cmap_buffered
+
+
+def process_images(images_folder, cmaps_folder, db_name, table_name, AUTH_TOKEN, DB_URL, compress = True, max_images=None):
     conn = libsql.connect(db_name, sync_url=DB_URL, auth_token=AUTH_TOKEN)    
     conn.sync()
 
@@ -65,11 +103,16 @@ def process_images(images_folder, cmaps_folder, db_name, table_name, AUTH_TOKEN,
         img_path = os.path.join(images_folder, img_file)
         mask_path = os.path.join(images_folder, mask_file)
         cmap_path = os.path.join(cmaps_folder, cmap_file)
-
-
-        img_base64 = image_to_base64(img_path)
-        mask_base64 = image_to_base64(mask_path)
-        cmap_base64 = image_to_base64(cmap_path)
+        
+        if compress:
+            img_b, mask_b, cmap_b = process_compression(img_path, mask_path, cmap_path)
+            img_base64 = base64.b64encode(img_b.getvalue()).decode('ascii')
+            mask_base64 = base64.b64encode(mask_b.getvalue()).decode('ascii')
+            cmap_base64 = base64.b64encode(cmap_b.getvalue()).decode('ascii')
+        else:
+            img_base64 = image_to_base64(img_path)
+            mask_base64 = image_to_base64(mask_path)
+            cmap_base64 = image_to_base64(cmap_path)
         
         conn.sync()
         cur.execute(insert_sql, (img_base64, mask_base64, cmap_base64))
@@ -85,11 +128,11 @@ load_dotenv()
 AUTH_TOKEN = os.getenv('AUTH_TOKEN')
 DB_URL = os.getenv('DB_URL')
 
-
+compress=True
 images_folder = "dataset"
 cmaps_folder = "whole_cmaps"
 db_name = "app.db"
 table_name = "images_dataset"
-max_images = 15
+max_images = 25
 
-process_images(images_folder, cmaps_folder, db_name, table_name, AUTH_TOKEN, DB_URL, max_images )
+process_images(images_folder, cmaps_folder, db_name, table_name, AUTH_TOKEN, DB_URL, compress, max_images )
