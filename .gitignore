@@ -168,3 +168,4 @@ whole_cmaps
 *.db
 .env
 app.*
+dataset_presplit
